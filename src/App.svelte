@@ -4,15 +4,115 @@
   import { CATEGORIES } from './lib/categories.js'
   import { createMockRepositories } from './data/mockRepos.js'
   import { compactNumber, relativeDate } from './lib/format.js'
-  import { loadStates, saveState } from './lib/db.js'
+  import {
+    loadStates,
+    saveState,
+    loadRepositoryCache,
+    saveRepositoryCache
+  } from './lib/db.js'
+  import {
+    fetchGitHubUser,
+    fetchStarredRepositories
+  } from './lib/github.js'
 
-  const repositories = createMockRepositories(3247)
+  const CACHE_MAX_AGE = 15 * 60 * 1000
+  const DEMO_REPOSITORIES = createMockRepositories(3247)
+
+  let repositories = DEMO_REPOSITORIES
+  let username = 'seclorum'
+  let githubUser = null
+  let sourceLabel = 'Demo data'
+  let loadStatus = 'Showing generated demo repositories'
+  let loadError = ''
+  let loadingRepos = false
+  let loadProgress = { page: 0, count: 0, done: false }
 
   let states = {}
   let selected = null
   let activeCategory = 'all'
   let search = ''
   let showSettings = false
+
+  async function loadGitHubStars({ force = false } = {}) {
+    const clean = String(username || '').trim().replace(/^@/, '')
+
+    if (!clean) {
+      loadError = 'Enter a GitHub username.'
+      return
+    }
+
+    username = clean
+    loadError = ''
+    loadingRepos = true
+    loadProgress = { page: 0, count: 0, done: false }
+    loadStatus = `Checking cached stars for ${clean}…`
+
+    let cache = null
+
+    try {
+      cache = await loadRepositoryCache(clean.toLowerCase())
+    } catch (error) {
+      console.warn('Could not read repository cache:', error)
+    }
+
+    const hasCache = Array.isArray(cache?.repositories)
+    const cacheIsFresh = hasCache &&
+      Date.now() - cache.fetchedAt < CACHE_MAX_AGE
+
+    if (hasCache) {
+      repositories = cache.repositories
+      githubUser = cache.user || null
+      sourceLabel = cacheIsFresh ? 'Cached GitHub stars' : 'Stale cache'
+      selected = null
+      loadStatus = `Showing ${repositories.length.toLocaleString()} cached repositories`
+    }
+
+    if (cacheIsFresh && !force) {
+      loadingRepos = false
+      return
+    }
+
+    loadStatus = `Loading public stars for ${clean}…`
+
+    try {
+      const user = await fetchGitHubUser(clean)
+      const fetched = await fetchStarredRepositories(clean, {
+        onProgress(progress) {
+          loadProgress = progress
+          loadStatus =
+            `Fetched ${progress.count.toLocaleString()} repositories ` +
+            `(page ${progress.page})…`
+        }
+      })
+
+      repositories = fetched
+      githubUser = user
+      selected = null
+      sourceLabel = 'GitHub'
+      loadStatus =
+        `Loaded ${fetched.length.toLocaleString()} public starred repositories`
+
+      try {
+        await saveRepositoryCache(clean.toLowerCase(), fetched, user)
+      } catch (error) {
+        console.warn('Could not save repository cache:', error)
+      }
+    } catch (error) {
+      loadError = error instanceof Error ? error.message : String(error)
+
+      if (hasCache) {
+        sourceLabel = 'Stale cache'
+        loadStatus = 'GitHub refresh failed; showing cached repositories'
+      } else {
+        repositories = DEMO_REPOSITORIES
+        githubUser = null
+        sourceLabel = 'Demo data'
+        loadStatus = 'GitHub could not be loaded; showing demo data'
+      }
+    } finally {
+      loadingRepos = false
+    }
+  }
 
   let loaded = false
 
@@ -24,6 +124,13 @@
     }
 
     loaded = true
+
+    if (new URLSearchParams(window.location.search).get('demo') === '1') {
+      loadStatus = 'Showing generated demo repositories (?demo=1)'
+      return
+    }
+
+    await loadGitHubStars()
   })
 
   $: categoryCounts = Object.fromEntries(
@@ -156,7 +263,7 @@
 
     <div class="account">
       <div class="github-mark">●</div>
-      <span>seclorum</span>
+      <span>{username}</span>
       <button
         class="icon-button"
         on:click={() => (showSettings = !showSettings)}
@@ -251,10 +358,22 @@
           <h1>Semantic Repository Map</h1>
           <p>
             Repositories grouped by category and similarity
+            · {sourceLabel}
             {#if search}
               · {filteredCount.toLocaleString()} matches
             {/if}
           </p>
+          {#if loadingRepos}
+            <p role="status">
+              {loadStatus}
+              {#if loadProgress.count}
+                ({loadProgress.count.toLocaleString()} loaded)
+              {/if}
+            </p>
+          {/if}
+          {#if loadError}
+            <p role="alert">{loadError}</p>
+          {/if}
         </div>
 
         <div class="view-toggle">
@@ -452,15 +571,41 @@
 
   {#if showSettings}
     <div class="settings-popover">
-      <strong>Star Map v0.1</strong>
-      <p>
-        This version uses generated repository data.
-        GitHub connection arrives in v0.2.
-      </p>
+      <strong>Star Map v0.2</strong>
+      <p>Load public starred repositories from GitHub.</p>
 
-      <button on:click={() => (showSettings = false)}>
-        Close
-      </button>
+      <label for="github-username">GitHub username</label>
+      <input
+        id="github-username"
+        bind:value={username}
+        placeholder="GitHub username"
+        autocomplete="off"
+        disabled={loadingRepos}
+      />
+
+      <p role="status">{loadStatus}</p>
+      {#if loadError}
+        <p role="alert">{loadError}</p>
+      {/if}
+
+      <div class="settings-actions">
+        <button
+          on:click={() => loadGitHubStars({ force: true })}
+          disabled={loadingRepos}
+        >
+          {loadingRepos ? 'Loading…' : 'Load / refresh stars'}
+        </button>
+        <button
+          on:click={() => window.open(
+            `https://github.com/${encodeURIComponent(username)}`,
+            '_blank',
+            'noopener,noreferrer'
+          )}
+        >
+          Open profile
+        </button>
+        <button on:click={() => (showSettings = false)}>Close</button>
+      </div>
     </div>
   {/if}
 

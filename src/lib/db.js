@@ -1,6 +1,7 @@
 const DB_NAME = 'star-map'
 const STORE_NAME = 'repo-state'
-const DB_VERSION = 1
+const CACHE_STORE_NAME = 'repo-cache'
+const DB_VERSION = 2
 
 function openDb() {
   return new Promise((resolve, reject) => {
@@ -12,6 +13,12 @@ function openDb() {
       if (!db.objectStoreNames.contains(STORE_NAME)) {
         db.createObjectStore(STORE_NAME, {
           keyPath: 'repoId'
+        })
+      }
+
+      if (!db.objectStoreNames.contains(CACHE_STORE_NAME)) {
+        db.createObjectStore(CACHE_STORE_NAME, {
+          keyPath: 'username'
         })
       }
     }
@@ -28,8 +35,7 @@ export async function loadStates() {
 
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(STORE_NAME, 'readonly')
-    const store = transaction.objectStore(STORE_NAME)
-    const request = store.getAll()
+    const request = transaction.objectStore(STORE_NAME).getAll()
 
     request.onsuccess = () => {
       const result = {}
@@ -52,9 +58,46 @@ export async function saveState(state) {
 
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(STORE_NAME, 'readwrite')
+
     transaction.objectStore(STORE_NAME).put(state)
 
     transaction.oncomplete = () => resolve()
     transaction.onerror = () => reject(transaction.error)
+    transaction.onabort = () => reject(transaction.error)
+  })
+}
+
+export async function loadRepositoryCache(username) {
+  if (!('indexedDB' in window)) return null
+
+  const db = await openDb()
+
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(CACHE_STORE_NAME, 'readonly')
+    const request = transaction.objectStore(CACHE_STORE_NAME).get(username)
+
+    request.onsuccess = () => resolve(request.result ?? null)
+    request.onerror = () => reject(request.error)
+  })
+}
+
+export async function saveRepositoryCache(username, repositories, user) {
+  if (!('indexedDB' in window)) return
+
+  const db = await openDb()
+
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(CACHE_STORE_NAME, 'readwrite')
+
+    transaction.objectStore(CACHE_STORE_NAME).put({
+      username,
+      repositories,
+      user,
+      fetchedAt: Date.now()
+    })
+
+    transaction.oncomplete = () => resolve()
+    transaction.onerror = () => reject(transaction.error)
+    transaction.onabort = () => reject(transaction.error)
   })
 }

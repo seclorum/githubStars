@@ -1,4 +1,16 @@
-<script>
+from pathlib import Path
+
+path = Path("src/lib/RepoMap.svelte")
+source = path.read_text()
+
+if source.count("<script>") != 1 or source.count("</script>") != 1:
+    raise SystemExit("Unexpected script block structure; no changes made.")
+
+start = source.index("<script>")
+end = source.index("</script>") + len("</script>")
+old_script = source[start:end]
+
+new_script = r'''<script>
   import { onMount, onDestroy } from 'svelte'
   import * as d3 from 'd3'
   import { CATEGORIES } from './categories.js'
@@ -383,99 +395,8 @@
     simulation?.stop()
     if (canvas) d3.select(canvas).on('.zoom', null)
   })
-</script>
+</script>'''
 
-<div class="map" bind:this={container}>
-  <canvas
-    bind:this={canvas}
-    on:mousemove={handleMove}
-    on:mouseleave={() => {
-      hoveredId = null
-      draw()
-    }}
-    on:click={handleClick}
-  ></canvas>
+path.write_text(source[:start] + new_script + source[end:])
+print(f"Updated {path}")
 
-  <div class="map-hint">
-    <span>Scroll to zoom</span>
-    <span>Drag to move</span>
-    <span>Click a repository</span>
-  </div>
-
-  <div class="size-legend">
-    <span class="legend-dot small"></span>
-    <span class="legend-dot medium"></span>
-    <span class="legend-dot large"></span>
-    <span>= more stars</span>
-  </div>
-</div>
-
-<style>
-  .map {
-    position: relative;
-    width: 100%;
-    height: 100%;
-    min-height: 600px;
-    overflow: hidden;
-    background:
-      radial-gradient(
-        circle at 50% 45%,
-        rgba(25, 64, 105, 0.11),
-        transparent 52%
-      );
-  }
-
-  canvas {
-    display: block;
-    width: 100%;
-    height: 100%;
-  }
-
-  .map-hint,
-  .size-legend {
-    position: absolute;
-    bottom: 16px;
-    padding: 8px 11px;
-    border: 1px solid #1e3047;
-    border-radius: 8px;
-    background: rgba(7, 17, 31, 0.86);
-    color: #708198;
-    font-size: 10px;
-    pointer-events: none;
-    backdrop-filter: blur(10px);
-  }
-
-  .map-hint {
-    left: 16px;
-    display: flex;
-    gap: 14px;
-  }
-
-  .size-legend {
-    right: 16px;
-    display: flex;
-    align-items: center;
-    gap: 7px;
-  }
-
-  .legend-dot {
-    display: inline-block;
-    border-radius: 50%;
-    border: 1px solid #60748c;
-  }
-
-  .small {
-    width: 5px;
-    height: 5px;
-  }
-
-  .medium {
-    width: 9px;
-    height: 9px;
-  }
-
-  .large {
-    width: 14px;
-    height: 14px;
-  }
-</style>
